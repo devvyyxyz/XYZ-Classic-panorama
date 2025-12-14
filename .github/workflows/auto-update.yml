@@ -7,9 +7,10 @@ on:
     inputs:
       pack_version:
         description: Optional explicit pack version (e.g., 1.0.0)
+      pack_name:
+        description: Name of the pack
       pack_dir:
         description: Relative path to pack root (contains assets/ and pack.mcmeta)
-        required: false
         default: '.'
 
 jobs:
@@ -22,3 +23,4 @@ jobs:
       pack_version: ${{ inputs.pack_version }}
     secrets:
       MODRINTH_API_TOKEN: ${{ secrets.MODRINTH_API_TOKEN }}
+      MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
