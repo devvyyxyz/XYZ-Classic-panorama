@@ -11,8 +11,6 @@ on:
         description: Name of the pack
       pack_dir:
         description: Relative path to pack root (contains assets/ and pack.mcmeta)
-        default: '.'
-
 jobs:
   update:
     uses: devvyyxyz/minecraft-pack-automation/.github/workflows/reusable-pack-update.yml@main
