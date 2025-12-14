@@ -80,7 +80,8 @@ def create_zip(
 def upload_to_modrinth(
     zip_path: str,
     project_id: str,
-    minecraft_version: str,
+    game_versions: list,
+    version_number: str,
     api_token: str,
     version_name: Optional[str] = None,
     changelog: Optional[str] = None
@@ -91,9 +92,10 @@ def upload_to_modrinth(
     Args:
         zip_path: Path to the zip file
         project_id: Modrinth project ID (slug or UUID)
-        minecraft_version: Target Minecraft version (e.g., "1.20.1")
+        game_versions: List of Minecraft versions this pack supports (e.g., ["1.20", "1.20.1", "1.21"])
+        version_number: Version number for this upload (e.g., "pack-format-12")
         api_token: Modrinth API token
-        version_name: Version name (defaults to "Minecraft <version>")
+        version_name: Version name (defaults to auto-generated)
         changelog: Release changelog (optional)
     
     Returns:
@@ -101,10 +103,16 @@ def upload_to_modrinth(
     """
     try:
         if version_name is None:
-            version_name = f"Minecraft {minecraft_version}"
+            if len(game_versions) == 1:
+                version_name = f"Minecraft {game_versions[0]}"
+            else:
+                version_name = f"Minecraft {game_versions[0]}-{game_versions[-1]}"
         
         if changelog is None:
-            changelog = f"Auto-updated resource pack for Minecraft {minecraft_version}"
+            if len(game_versions) == 1:
+                changelog = f"Auto-updated resource pack for Minecraft {game_versions[0]}"
+            else:
+                changelog = f"Auto-updated resource pack for Minecraft {game_versions[0]} through {game_versions[-1]} ({len(game_versions)} versions)"
         
         zip_file = Path(zip_path)
         if not zip_file.exists():
@@ -120,10 +128,10 @@ def upload_to_modrinth(
         
         body = {
             "name": version_name,
-            "version_number": minecraft_version,
+            "version_number": version_number,
             "changelog": changelog,
             "dependencies": [],
-            "game_versions": [minecraft_version],
+            "game_versions": game_versions,
             "release_channel": "release",
             "loaders": ["minecraft"],
             "featured": False,
@@ -152,10 +160,14 @@ def upload_to_modrinth(
         request.add_header('User-Agent', 'XYZ-Classic-Panorama-Updater/1.0')
         
         print(f"[*] Uploading to Modrinth ({zip_file.stat().st_size:,} bytes)...", file=sys.stderr)
+        print(f"    Supported versions: {', '.join(game_versions)}", file=sys.stderr)
         
         with urllib.request.urlopen(request, timeout=30) as response:
             response_data = response.read().decode()
-            print(f"[+] Upload successful for Minecraft {minecraft_version}", file=sys.stderr)
+            if len(game_versions) == 1:
+                print(f"[+] Upload successful for Minecraft {game_versions[0]}", file=sys.stderr)
+            else:
+                print(f"[+] Upload successful for {len(game_versions)} Minecraft versions ({game_versions[0]} - {game_versions[-1]})", file=sys.stderr)
             print(f"    Response: {response_data[:100]}...", file=sys.stderr)
             return True
     
@@ -174,26 +186,27 @@ def upload_to_modrinth(
 
 def main():
     """Main entry point."""
-    if len(sys.argv) < 5:
+    if len(sys.argv) < 6:
         print(
-            "Usage: python3 upload_modrinth.py <project_id> <minecraft_version> <api_token> <pack_dir> [output_zip] [version_name]",
+            "Usage: python3 upload_modrinth.py <project_id> <version_number> <game_versions_json> <api_token> <pack_dir> [output_zip] [version_name]",
             file=sys.stderr
         )
         sys.exit(1)
     
     project_id = sys.argv[1]
-    minecraft_version = sys.argv[2]
-    api_token = sys.argv[3]
-    pack_dir = sys.argv[4]
-    output_zip = sys.argv[5] if len(sys.argv) > 5 else f"XYZ-{minecraft_version}.zip"
-    version_name = sys.argv[6] if len(sys.argv) > 6 else f"Minecraft {minecraft_version}"
+    version_number = sys.argv[2]
+    game_versions = json.loads(sys.argv[3])  # Parse JSON array of versions
+    api_token = sys.argv[4]
+    pack_dir = sys.argv[5]
+    output_zip = sys.argv[6] if len(sys.argv) > 6 else f"XYZ-{version_number}.zip"
+    version_name = sys.argv[7] if len(sys.argv) > 7 else None
     
     # Create zip
     if not create_zip(pack_dir, output_zip):
         sys.exit(1)
     
     # Upload to Modrinth
-    if not upload_to_modrinth(output_zip, project_id, minecraft_version, api_token, version_name):
+    if not upload_to_modrinth(output_zip, project_id, game_versions, version_number, api_token, version_name):
         sys.exit(1)
     
     # Cleanup zip

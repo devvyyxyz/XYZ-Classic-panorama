@@ -46,8 +46,8 @@ jobs:
           VERSIONS_JSON=$(cat /tmp/versions.json)
           echo "versions=$(echo "$VERSIONS_JSON" | jq -c .)" >> $GITHUB_OUTPUT
       
-      - name: Extract missing versions
-        id: missing
+      - name: Extract groups to upload
+        id: groups
         run: |
           python3 << 'EOF'
           import json
@@ -56,27 +56,31 @@ jobs:
           with open('/tmp/versions.json', 'r') as f:
               data = json.load(f)
           
-          missing = data.get('missing_versions', [])
+          groups = data.get('groups_to_upload', [])
           
-          if not missing:
-              print("No missing versions to upload.")
-              print("missing_count=0", file=open(os.environ.get('GITHUB_OUTPUT', '/tmp/output'), 'a'))
+          if not groups:
+              print("No pack format groups to upload - all up to date!")
+              import os
+              with open(os.environ.get('GITHUB_OUTPUT', '/tmp/output'), 'a') as f:
+                  f.write("groups_count=0\n")
               sys.exit(0)
           
           import os
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f"missing_count={len(missing)}\n")
-              f.write(f"missing_json={json.dumps(missing)}\n")
+              f.write(f"groups_count={len(groups)}\n")
+              f.write(f"groups_json={json.dumps(groups)}\n")
           
-          print(f"Found {len(missing)} missing versions")
+          print(f"Found {len(groups)} pack format groups to upload")
+          for group in groups:
+              print(f"  - Pack Format {group['pack_format']}: {len(group['all_versions'])} versions ({group['version_range']})")
           EOF
       
-      - name: Upload missing versions
-        if: steps.missing.outputs.missing_count != '0'
+      - name: Upload pack format groups
+        if: steps.groups.outputs.groups_count != '0'
         env:
           MODRINTH_API_TOKEN: ${{ secrets.MODRINTH_API_TOKEN }}
           PROJECT_ID: ${{ github.event.inputs.project_id || secrets.MODRINTH_PROJECT_ID }}
-          MISSING_JSON: ${{ steps.missing.outputs.missing_json }}
+          GROUPS_JSON: ${{ steps.groups.outputs.groups_json }}
         run: |
           python3 << 'EOF'
           import json
@@ -84,8 +88,8 @@ jobs:
           import sys
           import subprocess
           
-          missing_json = os.environ.get('MISSING_JSON', '[]')
-          missing = json.loads(missing_json)
+          groups_json = os.environ.get('GROUPS_JSON', '[]')
+          groups = json.loads(groups_json)
           modrinth_token = os.environ.get('MODRINTH_API_TOKEN')
           project_id = os.environ.get('PROJECT_ID')
           
@@ -100,18 +104,26 @@ jobs:
           failed = []
           successful = []
           
-          for version_obj in missing:
-              version = version_obj['version']
-              pack_format = version_obj['pack_format']
+          for group in groups:
+              pack_format = group['pack_format']
+              version_number = group['version_number']
+              version_range = group['version_range']
+              all_versions = group['all_versions']
+              missing_versions = group['missing_versions']
               
-              print(f"\n[*] Processing Minecraft {version}...", file=sys.stderr)
+              # Use first version in the group to update pack.mcmeta
+              representative_version = all_versions[0]
+              
+              print(f"\n[*] Processing Pack Format {pack_format} ({version_range})...", file=sys.stderr)
+              print(f"    Missing versions: {', '.join(missing_versions)}", file=sys.stderr)
+              print(f"    Total versions in group: {len(all_versions)}", file=sys.stderr)
               
               # Update pack.mcmeta
               update_result = subprocess.run(
                   [
                       'python3', 'scripts/update_pack.py',
                       'pack.mcmeta',
-                      version,
+                      representative_version,
                       str(pack_format),
                       'XYZ Classic Panorama'
                   ],
@@ -120,17 +132,19 @@ jobs:
               )
               
               if update_result.returncode != 0:
-                  print(f"[!] Failed to update pack.mcmeta for {version}", file=sys.stderr)
+                  print(f"[!] Failed to update pack.mcmeta for Pack Format {pack_format}", file=sys.stderr)
                   print(update_result.stderr, file=sys.stderr)
-                  failed.append(version)
+                  failed.append(version_number)
                   continue
               
-              # Upload to Modrinth
+              # Upload to Modrinth with all game versions
+              game_versions_json = json.dumps(all_versions)
               upload_result = subprocess.run(
                   [
                       'python3', 'scripts/upload_modrinth.py',
                       project_id,
-                      version,
+                      version_number,
+                      game_versions_json,
                       modrinth_token,
                       '.'
                   ],
@@ -139,24 +153,26 @@ jobs:
               )
               
               if upload_result.returncode != 0:
-                  print(f"[!] Failed to upload {version} to Modrinth", file=sys.stderr)
+                  print(f"[!] Failed to upload Pack Format {pack_format} to Modrinth", file=sys.stderr)
                   print(upload_result.stderr, file=sys.stderr)
-                  failed.append(version)
+                  failed.append(version_number)
                   continue
               
               print(upload_result.stderr, file=sys.stderr)
-              successful.append(version)
+              successful.append(f"{version_number} ({version_range})")
           
           print(f"\n[+] Summary:", file=sys.stderr)
           print(f"    Successful: {len(successful)}", file=sys.stderr)
           print(f"    Failed: {len(failed)}", file=sys.stderr)
           
           if failed:
-              print(f"[!] Failed versions: {', '.join(failed)}", file=sys.stderr)
+              print(f"[!] Failed uploads: {', '.join(failed)}", file=sys.stderr)
               sys.exit(1)
           
           if successful:
-              print(f"[+] Successfully uploaded: {', '.join(successful)}", file=sys.stderr)
+              print(f"[+] Successfully uploaded:", file=sys.stderr)
+              for item in successful:
+                  print(f"      - {item}", file=sys.stderr)
           
           EOF
       

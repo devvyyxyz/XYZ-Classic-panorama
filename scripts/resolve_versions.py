@@ -152,6 +152,60 @@ def find_missing_versions(
     return missing
 
 
+def group_by_pack_format(
+    minecraft_releases: List[MinecraftVersion],
+    modrinth_versions: Set[str]
+) -> dict:
+    """
+    Group Minecraft versions by pack_format and identify which groups need uploading.
+    
+    Args:
+        minecraft_releases: All available Minecraft releases
+        modrinth_versions: Versions already on Modrinth
+    
+    Returns:
+        Dict with pack_format groups, each containing version info and missing status
+    """
+    # Group all versions by pack_format
+    format_groups = {}
+    for release in minecraft_releases:
+        pf = release.pack_format
+        if pf not in format_groups:
+            format_groups[pf] = {
+                "pack_format": pf,
+                "versions": [],
+                "all_versions": [],
+                "missing_versions": [],
+                "has_missing": False
+            }
+        
+        format_groups[pf]["all_versions"].append(release.version)
+        
+        # Check if this specific version is missing
+        if release.version not in modrinth_versions:
+            format_groups[pf]["missing_versions"].append(release.version)
+            format_groups[pf]["has_missing"] = True
+    
+    # For each group, determine version range and representative version
+    for pf, group in format_groups.items():
+        versions = group["all_versions"]
+        
+        # Sort versions (simple string sort works for most cases)
+        versions.sort()
+        
+        # Create version range string
+        if len(versions) == 1:
+            version_range = versions[0]
+        else:
+            version_range = f"{versions[0]}-{versions[-1]}"
+        
+        group["version_range"] = version_range
+        group["version_number"] = f"pack-format-{pf}"
+        group["display_name"] = f"Pack Format {pf} ({version_range})"
+    
+    return format_groups
+
+
 def main():
     """Main entry point."""
     if len(sys.argv) != 2:
@@ -168,26 +222,30 @@ def main():
     modrinth_versions = fetch_modrinth_versions(project_id)
     print(f"[+] Found {len(modrinth_versions)} versions on Modrinth", file=sys.stderr)
     
-    missing = find_missing_versions(mc_releases, modrinth_versions)
+    # Group by pack_format
+    format_groups = group_by_pack_format(mc_releases, modrinth_versions)
     
-    if missing:
-        print(f"[!] Found {len(missing)} missing versions:", file=sys.stderr)
-        for version in missing:
-            print(f"    - {version.version} (pack_format: {version.pack_format})", file=sys.stderr)
+    # Filter to only groups with missing versions
+    groups_to_upload = {
+        pf: group for pf, group in format_groups.items()
+        if group["has_missing"]
+    }
+    
+    if groups_to_upload:
+        print(f"[!] Found {len(groups_to_upload)} pack format groups to upload:", file=sys.stderr)
+        for pf, group in sorted(groups_to_upload.items(), reverse=True):
+            print(f"    - Pack Format {pf}: {len(group['missing_versions'])} missing versions ({group['version_range']})", file=sys.stderr)
     else:
-        print(f"[+] All versions are up-to-date!", file=sys.stderr)
+        print(f"[+] All pack formats are up-to-date!", file=sys.stderr)
     
     # Output JSON for workflow
     output = {
-        "all_releases": [
-            {"version": v.version, "pack_format": v.pack_format}
-            for v in mc_releases
+        "all_groups": list(format_groups.values()),
+        "groups_to_upload": [
+            group for group in format_groups.values()
+            if group["has_missing"]
         ],
         "modrinth_versions": sorted(list(modrinth_versions)),
-        "missing_versions": [
-            {"version": v.version, "pack_format": v.pack_format}
-            for v in missing
-        ]
     }
     
     print(json.dumps(output))
