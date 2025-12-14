@@ -1,24 +1,15 @@
-name: Auto-Update Pack (Caller)
+name: Auto-Update Pack
 
 on:
   schedule:
     - cron: '0 12 * * *'
   workflow_dispatch:
-    inputs:
-      pack_version:
-        description: Optional explicit pack version (e.g., 1.0.0)
-      pack_name:
-        description: Name of the pack
-      pack_dir:
-        description: Relative path to pack root (contains assets/ and pack.mcmeta)
+
 jobs:
   update:
     uses: devvyyxyz/minecraft-pack-automation/.github/workflows/reusable-pack-update.yml@main
     with:
       modrinth_project_id: o85X8jsr
       pack_name: XYZ-Classic-Panorama
-      pack_dir: ${{ inputs.pack_dir }}
-      pack_version: ${{ inputs.pack_version }}
     secrets:
       MODRINTH_API_TOKEN: ${{ secrets.MODRINTH_API_TOKEN }}
-      MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
