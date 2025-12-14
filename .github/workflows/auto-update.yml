@@ -35,16 +35,16 @@ jobs:
         env:
           PROJECT_ID: ${{ github.event.inputs.project_id || secrets.MODRINTH_PROJECT_ID }}
         run: |
-          python3 scripts/resolve_versions.py "$PROJECT_ID" > /tmp/versions.json 2>&1
+          python3 scripts/resolve_versions.py "$PROJECT_ID" > /tmp/versions.json
           
           if [ $? -ne 0 ]; then
             echo "[!] Version resolution failed"
-            cat /tmp/versions.json
             exit 1
           fi
           
-          cat /tmp/versions.json
-          echo "versions=$(cat /tmp/versions.json)" >> $GITHUB_OUTPUT
+          # Store versions JSON as output (minified to single line)
+          VERSIONS_JSON=$(cat /tmp/versions.json)
+          echo "versions=$(echo "$VERSIONS_JSON" | jq -c .)" >> $GITHUB_OUTPUT
       
       - name: Extract missing versions
         id: missing
