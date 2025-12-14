@@ -1,0 +1,12 @@
+# Add your Minecraft resource pack files here
+# Directory structure should match Minecraft's resource pack format
+#
+# Example:
+# assets/
+# ├── minecraft/
+# │   ├── textures/
+# │   │   ├── block/
+# │   │   ├── item/
+# │   │   └── ...
+# │   └── ...
+# └── ...

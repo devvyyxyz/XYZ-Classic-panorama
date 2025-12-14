@@ -1,0 +1,170 @@
+name: Auto-Update Minecraft Resource Pack
+
+on:
+  # Run daily at 3 AM UTC
+  schedule:
+    - cron: '0 3 * * *'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: 'Modrinth Project ID (optional, uses env var if not provided)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  update-pack:
+    runs-on: ubuntu-latest
+    name: Update Resource Pack
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Resolve missing versions
+        id: resolve
+        env:
+          PROJECT_ID: ${{ github.event.inputs.project_id || secrets.MODRINTH_PROJECT_ID }}
+        run: |
+          python3 scripts/resolve_versions.py "$PROJECT_ID" > /tmp/versions.json 2>&1
+          
+          if [ $? -ne 0 ]; then
+            echo "[!] Version resolution failed"
+            cat /tmp/versions.json
+            exit 1
+          fi
+          
+          cat /tmp/versions.json
+          echo "versions=$(cat /tmp/versions.json)" >> $GITHUB_OUTPUT
+      
+      - name: Extract missing versions
+        id: missing
+        run: |
+          python3 << 'EOF'
+          import json
+          import sys
+          
+          with open('/tmp/versions.json', 'r') as f:
+              data = json.load(f)
+          
+          missing = data.get('missing_versions', [])
+          
+          if not missing:
+              print("No missing versions to upload.")
+              print("missing_count=0", file=open(os.environ.get('GITHUB_OUTPUT', '/tmp/output'), 'a'))
+              sys.exit(0)
+          
+          import os
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"missing_count={len(missing)}\n")
+              f.write(f"missing_json={json.dumps(missing)}\n")
+          
+          print(f"Found {len(missing)} missing versions")
+          EOF
+      
+      - name: Upload missing versions
+        if: steps.missing.outputs.missing_count != '0'
+        env:
+          MODRINTH_API_TOKEN: ${{ secrets.MODRINTH_API_TOKEN }}
+          PROJECT_ID: ${{ github.event.inputs.project_id || secrets.MODRINTH_PROJECT_ID }}
+          MISSING_JSON: ${{ steps.missing.outputs.missing_json }}
+        run: |
+          python3 << 'EOF'
+          import json
+          import os
+          import sys
+          import subprocess
+          
+          missing_json = os.environ.get('MISSING_JSON', '[]')
+          missing = json.loads(missing_json)
+          modrinth_token = os.environ.get('MODRINTH_API_TOKEN')
+          project_id = os.environ.get('PROJECT_ID')
+          
+          if not modrinth_token:
+              print("ERROR: MODRINTH_API_TOKEN not set", file=sys.stderr)
+              sys.exit(1)
+          
+          if not project_id:
+              print("ERROR: MODRINTH_PROJECT_ID not set", file=sys.stderr)
+              sys.exit(1)
+          
+          failed = []
+          successful = []
+          
+          for version_obj in missing:
+              version = version_obj['version']
+              pack_format = version_obj['pack_format']
+              
+              print(f"\n[*] Processing Minecraft {version}...", file=sys.stderr)
+              
+              # Update pack.mcmeta
+              update_result = subprocess.run(
+                  [
+                      'python3', 'scripts/update_pack.py',
+                      'pack.mcmeta',
+                      version,
+                      str(pack_format),
+                      'XYZ Classic Panorama'
+                  ],
+                  capture_output=True,
+                  text=True
+              )
+              
+              if update_result.returncode != 0:
+                  print(f"[!] Failed to update pack.mcmeta for {version}", file=sys.stderr)
+                  print(update_result.stderr, file=sys.stderr)
+                  failed.append(version)
+                  continue
+              
+              # Upload to Modrinth
+              upload_result = subprocess.run(
+                  [
+                      'python3', 'scripts/upload_modrinth.py',
+                      project_id,
+                      version,
+                      modrinth_token,
+                      '.'
+                  ],
+                  capture_output=True,
+                  text=True
+              )
+              
+              if upload_result.returncode != 0:
+                  print(f"[!] Failed to upload {version} to Modrinth", file=sys.stderr)
+                  print(upload_result.stderr, file=sys.stderr)
+                  failed.append(version)
+                  continue
+              
+              print(upload_result.stderr, file=sys.stderr)
+              successful.append(version)
+          
+          print(f"\n[+] Summary:", file=sys.stderr)
+          print(f"    Successful: {len(successful)}", file=sys.stderr)
+          print(f"    Failed: {len(failed)}", file=sys.stderr)
+          
+          if failed:
+              print(f"[!] Failed versions: {', '.join(failed)}", file=sys.stderr)
+              sys.exit(1)
+          
+          if successful:
+              print(f"[+] Successfully uploaded: {', '.join(successful)}", file=sys.stderr)
+          
+          EOF
+      
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Resource Pack Update Report"
+          echo ""
+          echo "**Status**: ${{ job.status }}"
+          echo "**Triggered by**: ${{ github.event_name }}"
+          echo "**Timestamp**: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
