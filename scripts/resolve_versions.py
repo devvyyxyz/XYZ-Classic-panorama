@@ -2,62 +2,15 @@
 """
 Minecraft Version Resolver
 Fetches Minecraft releases and Modrinth versions to identify missing uploads.
+Uses misode/mcmeta API for accurate, auto-updating pack format data.
 """
 
 import json
 import sys
 import urllib.request
+from pathlib import Path
 from typing import Dict, List, Set, Optional
 from dataclasses import dataclass
-
-
-# Minecraft version to pack_format mapping
-# Reference: https://minecraft.wiki/w/Pack_format
-MINECRAFT_VERSION_MAP: Dict[str, int] = {
-    # 1.0-1.5 (pack_format 1)
-    "1.0": 1, "1.1": 1,
-    "1.2.1": 1, "1.2.2": 1, "1.2.3": 1, "1.2.4": 1, "1.2.5": 1,
-    "1.3.1": 1, "1.3.2": 1,
-    "1.4.2": 1, "1.4.4": 1, "1.4.5": 1, "1.4.6": 1, "1.4.7": 1,
-    "1.5.1": 1, "1.5.2": 1,
-    
-    # 1.6-1.8 (pack_format 1)
-    "1.6.1": 1, "1.6.2": 1, "1.6.4": 1,
-    "1.7.2": 1, "1.7.3": 1, "1.7.4": 1, "1.7.5": 1, "1.7.6": 1, "1.7.7": 1, "1.7.8": 1, "1.7.9": 1, "1.7.10": 1,
-    "1.8": 1, "1.8.1": 1, "1.8.2": 1, "1.8.3": 1, "1.8.4": 1, "1.8.5": 1, "1.8.6": 1, "1.8.7": 1, "1.8.8": 1, "1.8.9": 1,
-    
-    # 1.9-1.10 (pack_format 2)
-    "1.9": 2, "1.9.1": 2, "1.9.2": 2, "1.9.3": 2, "1.9.4": 2,
-    "1.10": 2, "1.10.1": 2, "1.10.2": 2,
-    
-    # 1.11-1.12 (pack_format 3)
-    "1.11": 3, "1.11.1": 3, "1.11.2": 3,
-    "1.12": 3, "1.12.1": 3, "1.12.2": 3,
-    
-    # 1.13-1.14 (pack_format 4)
-    "1.13": 4, "1.13.1": 4, "1.13.2": 4,
-    "1.14": 4, "1.14.1": 4, "1.14.2": 4, "1.14.3": 4, "1.14.4": 4,
-    
-    # 1.15 (pack_format 5)
-    "1.15": 5, "1.15.1": 5, "1.15.2": 5,
-    
-    # 1.16-1.17 (pack_format 6)
-    "1.16": 6, "1.16.1": 6, "1.16.2": 6, "1.16.3": 6, "1.16.4": 6, "1.16.5": 6,
-    "1.17": 6, "1.17.1": 6,
-    
-    # 1.18 (pack_format 7)
-    "1.18": 7, "1.18.1": 7, "1.18.2": 7,
-    
-    # 1.19 (pack_format 8)
-    "1.19": 8, "1.19.1": 8, "1.19.2": 8, "1.19.3": 8, "1.19.4": 8,
-    
-    # 1.20 (pack_format 12)
-    "1.20": 12, "1.20.1": 12, "1.20.2": 12, "1.20.3": 12, "1.20.4": 12, "1.20.5": 12, "1.20.6": 12,
-    
-    # 1.21 (pack_format 12 - future versions included for forward compatibility)
-    "1.21": 12, "1.21.1": 12, "1.21.2": 12, "1.21.3": 12, "1.21.4": 12, "1.21.5": 12, 
-    "1.21.6": 12, "1.21.7": 12, "1.21.8": 12, "1.21.9": 12, "1.21.10": 12, "1.21.11": 12,
-}
 
 
 @dataclass
@@ -67,62 +20,119 @@ class MinecraftVersion:
     pack_format: int
 
 
+@dataclass
+class MinecraftVersion:
+    """Represents a Minecraft release version."""
+    version: str
+    pack_format: int
+
+
+def get_pack_version() -> str:
+    """Read pack version from VERSION file."""
+    version_file = Path(__file__).parent.parent / "VERSION"
+    try:
+        with open(version_file, 'r') as f:
+            version = f.read().strip()
+            if not version:
+                print("ERROR: VERSION file is empty", file=sys.stderr)
+                sys.exit(1)
+            return version
+    except FileNotFoundError:
+        print("ERROR: VERSION file not found. Create a VERSION file with your pack version (e.g., 1.0.0)", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"ERROR: Failed to read VERSION file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def fetch_minecraft_releases() -> List[MinecraftVersion]:
     """
-    Fetch all Minecraft Java release versions from official Mojang API.
+    Fetch all Minecraft Java release versions with pack formats from misode/mcmeta API.
+    This API is automatically updated and includes accurate resource pack format data.
     
     Returns:
         List of MinecraftVersion objects for release versions only.
     """
     try:
-        url = "https://piston-meta.mojang.com/mc/game/version_manifest.json"
-        with urllib.request.urlopen(url, timeout=10) as response:
-            data = json.loads(response.read().decode())
+        # Fetch comprehensive version data from misode/mcmeta (community-maintained, auto-updated)
+        url = "https://raw.githubusercontent.com/misode/mcmeta/summary/versions/data.json"
+        req = urllib.request.Request(url)
+        req.add_header('User-Agent', 'XYZ-Classic-Panorama-Updater/1.0')
+        
+        with urllib.request.urlopen(req, timeout=30) as response:
+            versions_data = json.loads(response.read().decode())
         
         releases = []
-        for version_obj in data.get("versions", []):
-            if version_obj.get("type") == "release":
-                version_str = version_obj.get("id")
-                pack_format = MINECRAFT_VERSION_MAP.get(version_str)
-                
-                if pack_format is not None:
-                    releases.append(MinecraftVersion(version_str, pack_format))
-                else:
-                    print(f"WARNING: Unknown pack_format for version {version_str}", file=sys.stderr)
+        skipped = []
         
+        for version_obj in versions_data:
+            # Only process release versions (skip snapshots, pre-releases, etc.)
+            if version_obj.get("type") != "release":
+                continue
+            
+            version_str = version_obj.get("id")
+            resource_pack_version = version_obj.get("resource_pack_version")
+            
+            if version_str and resource_pack_version is not None:
+                releases.append(MinecraftVersion(version=version_str, pack_format=resource_pack_version))
+            else:
+                skipped.append(version_str)
+        
+        if skipped:
+            print(f"[!] Skipped {len(skipped)} versions without pack_format data: {', '.join(skipped[:5])}{'...' if len(skipped) > 5 else ''}", file=sys.stderr)
+        
+        print(f"[+] Found {len(releases)} Minecraft release versions with resource pack formats", file=sys.stderr)
         return releases
     
     except Exception as e:
-        print(f"ERROR: Failed to fetch Minecraft releases: {e}", file=sys.stderr)
+        print(f"ERROR: Failed to fetch Minecraft releases from misode/mcmeta API: {e}", file=sys.stderr)
+        print(f"ERROR: This API is required for accurate pack format data.", file=sys.stderr)
+        print(f"ERROR: Check your internet connection or try again later.", file=sys.stderr)
         sys.exit(1)
 
 
-def fetch_modrinth_versions(project_id: str) -> Set[str]:
+def fetch_modrinth_versions(project_id: str) -> dict:
     """
-    Fetch all Minecraft versions already uploaded to Modrinth.
+    Fetch all versions currently uploaded to Modrinth.
     
     Args:
         project_id: Modrinth project ID (slug or UUID)
     
     Returns:
-        Set of version strings already on Modrinth
+        Dict with:
+        - 'game_versions': Set of Minecraft versions (e.g., {"1.20.1", "1.21"})
+        - 'pack_versions': Dict mapping pack version to game versions
+          (e.g., {"1.0.0": ["1.20", "1.20.1"], "1.1.0": ["1.21"]})
     """
     try:
         url = f"https://api.modrinth.com/v2/project/{project_id}/versions"
         with urllib.request.urlopen(url, timeout=10) as response:
             versions = json.loads(response.read().decode())
         
-        modrinth_versions = set()
-        for version in versions:
-            for game_version in version.get("game_versions", []):
-                modrinth_versions.add(game_version)
+        # Extract all unique game_versions and pack versions
+        game_versions = set()
+        pack_versions = {}
         
-        return modrinth_versions
+        for version in versions:
+            version_number = version.get('version_number', '')
+            game_vers = version.get('game_versions', [])
+            
+            game_versions.update(game_vers)
+            
+            if version_number:
+                if version_number not in pack_versions:
+                    pack_versions[version_number] = []
+                pack_versions[version_number].extend(game_vers)
+        
+        return {
+            'game_versions': game_versions,
+            'pack_versions': pack_versions
+        }
     
     except urllib.error.HTTPError as e:
         if e.code == 404:
             print(f"WARNING: Project '{project_id}' not found on Modrinth", file=sys.stderr)
-            return set()
+            return {'game_versions': set(), 'pack_versions': {}}
         print(f"ERROR: Modrinth API error: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
@@ -154,18 +164,23 @@ def find_missing_versions(
 
 def group_by_pack_format(
     minecraft_releases: List[MinecraftVersion],
-    modrinth_versions: Set[str]
+    modrinth_data: dict,
+    pack_version: str
 ) -> dict:
     """
     Group Minecraft versions by pack_format and identify which groups need uploading.
     
     Args:
         minecraft_releases: All available Minecraft releases
-        modrinth_versions: Versions already on Modrinth
+        modrinth_data: Dict with 'game_versions' set and 'pack_versions' dict from Modrinth
+        pack_version: Current pack version from VERSION file (e.g., "1.0.0")
     
     Returns:
-        Dict with pack_format groups, each containing version info and missing status
+        Dict with pack_format groups, each containing version info and upload status
     """
+    modrinth_game_versions = modrinth_data['game_versions']
+    modrinth_pack_versions = modrinth_data['pack_versions']
+    
     # Group all versions by pack_format
     format_groups = {}
     for release in minecraft_releases:
@@ -173,20 +188,18 @@ def group_by_pack_format(
         if pf not in format_groups:
             format_groups[pf] = {
                 "pack_format": pf,
-                "versions": [],
                 "all_versions": [],
                 "missing_versions": [],
-                "has_missing": False
+                "needs_upload": False
             }
         
         format_groups[pf]["all_versions"].append(release.version)
         
-        # Check if this specific version is missing
-        if release.version not in modrinth_versions:
+        # Check if this specific Minecraft version is missing
+        if release.version not in modrinth_game_versions:
             format_groups[pf]["missing_versions"].append(release.version)
-            format_groups[pf]["has_missing"] = True
     
-    # For each group, determine version range and representative version
+    # For each group, determine version range and check if pack version exists
     for pf, group in format_groups.items():
         versions = group["all_versions"]
         
@@ -200,8 +213,33 @@ def group_by_pack_format(
             version_range = f"{versions[0]}-{versions[-1]}"
         
         group["version_range"] = version_range
-        group["version_number"] = f"pack-format-{pf}"
+        group["version_number"] = f"{pack_version}-pf{pf}"  # e.g., "1.0.0-pf12"
         group["display_name"] = f"Pack Format {pf} ({version_range})"
+        
+        # Check if this pack version already exists on Modrinth for this pack_format
+        # We need to upload if:
+        # 1. There are missing Minecraft versions, OR
+        # 2. This specific pack version doesn't exist on Modrinth
+        version_number = f"{pack_version}-pf{pf}"
+        existing_game_versions = modrinth_pack_versions.get(version_number, [])
+        
+        # Determine if we need to upload
+        if version_number not in modrinth_pack_versions:
+            # This pack version doesn't exist at all on Modrinth
+            group["needs_upload"] = True
+            group["upload_reason"] = f"Pack version {pack_version} not on Modrinth for PF{pf}"
+        elif group["missing_versions"]:
+            # There are new Minecraft versions not covered
+            group["needs_upload"] = True
+            group["upload_reason"] = f"New Minecraft versions: {', '.join(group['missing_versions'][:3])}{'...' if len(group['missing_versions']) > 3 else ''}"
+        elif set(existing_game_versions) != set(versions):
+            # Pack version exists but doesn't cover all expected game versions
+            group["needs_upload"] = True
+            group["upload_reason"] = "Game version list mismatch"
+        else:
+            # Already up-to-date
+            group["needs_upload"] = False
+            group["upload_reason"] = "Up-to-date"
     
     return format_groups
 
@@ -214,38 +252,45 @@ def main():
     
     project_id = sys.argv[1]
     
+    # Get pack version from VERSION file
+    pack_version = get_pack_version()
+    print(f"[*] Pack version: {pack_version}", file=sys.stderr)
+    
     print(f"[*] Fetching Minecraft releases...", file=sys.stderr)
     mc_releases = fetch_minecraft_releases()
     print(f"[+] Found {len(mc_releases)} Minecraft release versions", file=sys.stderr)
     
     print(f"[*] Fetching Modrinth versions for project '{project_id}'...", file=sys.stderr)
-    modrinth_versions = fetch_modrinth_versions(project_id)
-    print(f"[+] Found {len(modrinth_versions)} versions on Modrinth", file=sys.stderr)
+    modrinth_data = fetch_modrinth_versions(project_id)
+    print(f"[+] Found {len(modrinth_data['game_versions'])} game versions on Modrinth", file=sys.stderr)
+    print(f"[+] Found {len(modrinth_data['pack_versions'])} pack versions on Modrinth", file=sys.stderr)
     
     # Group by pack_format
-    format_groups = group_by_pack_format(mc_releases, modrinth_versions)
+    format_groups = group_by_pack_format(mc_releases, modrinth_data, pack_version)
     
-    # Filter to only groups with missing versions
+    # Filter to only groups that need uploading
     groups_to_upload = {
         pf: group for pf, group in format_groups.items()
-        if group["has_missing"]
+        if group["needs_upload"]
     }
     
     if groups_to_upload:
         print(f"[!] Found {len(groups_to_upload)} pack format groups to upload:", file=sys.stderr)
         for pf, group in sorted(groups_to_upload.items(), reverse=True):
-            print(f"    - Pack Format {pf}: {len(group['missing_versions'])} missing versions ({group['version_range']})", file=sys.stderr)
+            print(f"    - Pack Format {pf}: {group['upload_reason']} ({group['version_range']})", file=sys.stderr)
     else:
         print(f"[+] All pack formats are up-to-date!", file=sys.stderr)
     
     # Output JSON for workflow
     output = {
+        "pack_version": pack_version,
         "all_groups": list(format_groups.values()),
         "groups_to_upload": [
             group for group in format_groups.values()
-            if group["has_missing"]
+            if group["needs_upload"]
         ],
-        "modrinth_versions": sorted(list(modrinth_versions)),
+        "modrinth_game_versions": sorted(list(modrinth_data['game_versions'])),
+        "modrinth_pack_versions": list(modrinth_data['pack_versions'].keys()),
     }
     
     print(json.dumps(output))
