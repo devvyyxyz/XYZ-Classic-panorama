@@ -7,12 +7,9 @@ on:
     inputs:
       pack_version:
         description: Optional explicit pack version (e.g., 1.0.0)
-        required: false
-        type: string
       pack_dir:
         description: Relative path to pack root (contains assets/ and pack.mcmeta)
         required: false
-        type: string
         default: '.'
 
 jobs:
